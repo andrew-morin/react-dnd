@@ -52,7 +52,6 @@ class TouchBackendImpl {
         this.addEventListener(root, 'start', this.getTopMoveStartHandler());
         this.addEventListener(root, 'start', this.handleTopMoveStartCapture, true);
         this.addEventListener(root, 'move', this.handleTopMove);
-        this.addEventListener(root, 'move', this.handleTopMoveCapture, true);
         this.addEventListener(root, 'end', this.handleTopMoveEndCapture, true);
         if (this.options.enableMouseEvents && !this.options.ignoreContextMenu) {
             this.addEventListener(root, 'contextmenu', this.handleTopMoveEndCapture);
@@ -70,7 +69,6 @@ class TouchBackendImpl {
         this._mouseClientOffset = {};
         this.removeEventListener(root, 'start', this.handleTopMoveStartCapture, true);
         this.removeEventListener(root, 'start', this.handleTopMoveStart);
-        this.removeEventListener(root, 'move', this.handleTopMoveCapture, true);
         this.removeEventListener(root, 'move', this.handleTopMove);
         this.removeEventListener(root, 'end', this.handleTopMoveEndCapture, true);
         if (this.options.enableMouseEvents && !this.options.ignoreContextMenu) {
@@ -128,45 +126,10 @@ class TouchBackendImpl {
             return ()=>{
             /* noop */ };
         }
-        const handleMove = (e)=>{
-            if (!this.document || !root || !this.monitor.isDragging()) {
-                return;
-            }
-            let coords;
-            /**
-			 * Grab the coordinates for the current mouse/touch position
-			 */ switch(e.type){
-                case eventNames.mouse.move:
-                    coords = {
-                        x: e.clientX,
-                        y: e.clientY
-                    };
-                    break;
-                case eventNames.touch.move:
-                    var ref, ref1;
-                    coords = {
-                        x: ((ref = e.touches[0]) === null || ref === void 0 ? void 0 : ref.clientX) || 0,
-                        y: ((ref1 = e.touches[0]) === null || ref1 === void 0 ? void 0 : ref1.clientY) || 0
-                    };
-                    break;
-            }
-            /**
-			 * Use the coordinates to grab the element the drag ended on.
-			 * If the element is the same as the target node (or any of it's children) then we have hit a drop target and can handle the move.
-			 */ const droppedOn = coords != null ? this.document.elementFromPoint(coords.x, coords.y) : undefined;
-            const childMatch = droppedOn && node.contains(droppedOn);
-            if (droppedOn === node || childMatch) {
-                return this.handleMove(e, targetId);
-            }
-        };
-        /**
-		 * Attaching the event listener to the body so that touchmove will work while dragging over multiple target elements.
-		 */ this.addEventListener(this.document.body, 'move', handleMove);
         this.targetNodes.set(targetId, node);
         return ()=>{
             if (this.document) {
                 this.targetNodes.delete(targetId);
-                this.removeEventListener(this.document.body, 'move', handleMove);
             }
         };
     }
@@ -249,24 +212,15 @@ class TouchBackendImpl {
             this.timeout = setTimeout(this.handleTopMoveStart.bind(this, e), delay);
             this.waitingForDelay = true;
         };
-        this.handleTopMoveCapture = ()=>{
-            this.dragOverTargetIds = [];
-        };
-        this.handleMove = (_evt, targetId)=>{
-            if (this.dragOverTargetIds) {
-                this.dragOverTargetIds.unshift(targetId);
-            }
-        };
-        this.handleTopMove = (e1)=>{
+        this.handleTopMove = (e)=>{
             if (this.timeout) {
                 clearTimeout(this.timeout);
             }
             if (!this.document || this.waitingForDelay) {
                 return;
             }
-            const { moveStartSourceIds , dragOverTargetIds  } = this;
-            const enableHoverOutsideTarget = this.options.enableHoverOutsideTarget;
-            const clientOffset = (0, _offsetsJs).getEventClientOffset(e1, this.lastTargetTouchFallback);
+            const { moveStartSourceIds  } = this;
+            const clientOffset = (0, _offsetsJs).getEventClientOffset(e, this.lastTargetTouchFallback);
             if (!clientOffset) {
                 return;
             }
@@ -291,13 +245,40 @@ class TouchBackendImpl {
             const sourceNode = this.sourceNodes.get(this.monitor.getSourceId());
             this.installSourceNodeRemovalObserver(sourceNode);
             this.actions.publishDragSource();
-            if (e1.cancelable) e1.preventDefault();
-            // Get the node elements of the hovered DropTargets
-            const dragOverTargetNodes = (dragOverTargetIds || []).map((key)=>this.targetNodes.get(key)
-            ).filter((e)=>!!e
-            );
+            if (e.cancelable) e.preventDefault();
+            this.lastMoveEvent = e;
+            if (this.shouldRequestMoveFrame) {
+                this.shouldRequestMoveFrame = false;
+                requestAnimationFrame(this.handleTopMoveStream);
+            }
+        };
+        this.handleTopMoveStream = ()=>{
+            const enableHoverOutsideTarget = this.options.enableHoverOutsideTarget;
+            this.shouldRequestMoveFrame = true;
+            const e = this.lastMoveEvent;
+            if (!this.monitor.isDragging() || !this.document || !e) {
+                return;
+            }
+            const clientOffset = (0, _offsetsJs).getEventClientOffset(e);
+            // If we have a drag blocking element, ignore it when finding the target element
+            const dragBlocker = this.mouseBlockDivId && document.getElementById(this.mouseBlockDivId);
+            if (dragBlocker) {
+                dragBlocker.style.setProperty('pointer-events', 'none');
+            }
+            const targetElement = document.elementFromPoint(clientOffset.x, clientOffset.y);
+            if (dragBlocker) {
+                dragBlocker.style.setProperty('pointer-events', 'auto');
+            }
             // Get the a ordered list of nodes that are touched by
-            const elementsAtPoint = this.options.getDropTargetElementsAtPoint ? this.options.getDropTargetElementsAtPoint(clientOffset.x, clientOffset.y, dragOverTargetNodes) : this.document.elementsFromPoint(clientOffset.x, clientOffset.y);
+            const elementsAtPoint = this.options.getDropTargetElementsAtPoint ? this.options.getDropTargetElementsAtPoint(clientOffset.x, clientOffset.y, []) : this.document.elementsFromPoint(clientOffset.x, clientOffset.y);
+            const targetNodes = this.targetNodes;
+            const dragOverTargetNodes = [];
+            Object.keys(targetNodes).forEach(function(key) {
+                const node = targetNodes.get(key);
+                if (node && (targetElement === node || node.contains(targetElement))) {
+                    dragOverTargetNodes.push(node);
+                }
+            });
             // Extend list with parents that are not receiving elementsFromPoint events (size 0 elements and svg groups)
             const elementsAtPointExtended = [];
             for(const nodeId in elementsAtPoint){
@@ -324,6 +305,7 @@ class TouchBackendImpl {
             .filter((node)=>!!node
             ).filter((id, index, ids)=>ids.indexOf(id) === index
             );
+            const sourceNode = this.sourceNodes.get(this.monitor.getSourceId());
             // Invoke hover for drop targets when source node is still over and pointer is outside
             if (enableHoverOutsideTarget) {
                 for(const targetId in this.targetNodes){
@@ -380,6 +362,7 @@ class TouchBackendImpl {
             }
         };
         this.options = new _optionsReaderJs.OptionsReader(options, context);
+        this.mouseBlockDivId = this.options.mouseBlockDivId;
         this.actions = manager.getActions();
         this.monitor = manager.getMonitor();
         this.sourceNodes = new Map();
@@ -388,6 +371,7 @@ class TouchBackendImpl {
         this.targetNodes = new Map();
         this.listenerTypes = [];
         this._mouseClientOffset = {};
+        this.shouldRequestMoveFrame = true;
         this._isScrolling = false;
         if (this.options.enableMouseEvents) {
             this.listenerTypes.push(_interfacesJs.ListenerType.mouse);
