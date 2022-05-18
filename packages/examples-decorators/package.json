@@ -29,7 +29,7 @@
     "lodash": "^4.17.21",
     "react-dnd": "workspace:packages/react-dnd",
     "react-dnd-html5-backend": "workspace:packages/backend-html5",
-    "react-frame-component": "^4.1.3"
+    "react-frame-component": "^5.2.2"
   },
   "devDependencies": {
     "@react-dnd/build": "workspace:packages/build",
