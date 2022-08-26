@@ -18,6 +18,8 @@ export declare class TouchBackendImpl implements Backend {
     private dragOverTargetIds;
     private draggedSourceNode;
     private draggedSourceNodeRemovalObserver;
+    private lastMoveEvent;
+    private shouldRequestMoveFrame;
     private lastTargetTouchFallback;
     constructor(manager: DragDropManager, context: TouchBackendContext, options: Partial<TouchBackendOptions>);
     /**
@@ -38,9 +40,8 @@ export declare class TouchBackendImpl implements Backend {
     private getTopMoveStartHandler;
     handleTopMoveStart: (e: MouseEvent | TouchEvent) => void;
     handleTopMoveStartDelay: (e: Event) => void;
-    handleTopMoveCapture: () => void;
-    handleMove: (_evt: MouseEvent | TouchEvent, targetId: string) => void;
     handleTopMove: (e: TouchEvent | MouseEvent) => void;
+    handleTopMoveStream: () => void;
     /**
      *
      * visible for testing

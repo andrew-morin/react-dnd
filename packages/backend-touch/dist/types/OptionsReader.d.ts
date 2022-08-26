@@ -17,4 +17,5 @@ export declare class OptionsReader implements TouchBackendOptions {
     get window(): Window | undefined;
     get document(): Document | undefined;
     get rootElement(): Node | undefined;
+    get mouseBlockDivId(): string | undefined;
 }

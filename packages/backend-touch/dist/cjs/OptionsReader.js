@@ -129,6 +129,11 @@ var OptionsReader = /*#__PURE__*/function () {
 
       return ((_this$args5 = this.args) === null || _this$args5 === void 0 ? void 0 : _this$args5.rootElement) || this.document;
     }
+  }, {
+    key: "mouseBlockDivId",
+    get: function get() {
+      return this.args.mouseBlockDivId;
+    }
   }]);
 
   return OptionsReader;
