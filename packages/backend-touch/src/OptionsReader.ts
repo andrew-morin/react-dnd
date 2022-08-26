@@ -80,4 +80,8 @@ export class OptionsReader implements TouchBackendOptions {
 	public get rootElement(): Node | undefined {
 		return this.args?.rootElement || (this.document as any as Node)
 	}
+
+	public get mouseBlockDivId(): string | undefined {
+		return this.args.mouseBlockDivId
+	}
 }

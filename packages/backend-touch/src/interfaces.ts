@@ -18,6 +18,7 @@ export interface TouchBackendOptions {
 	touchSlop: number
 	scrollAngleRanges?: AngleRange[]
 	rootElement: Node | undefined
+	mouseBlockDivId: string | undefined
 
 	getDropTargetElementsAtPoint?: (
 		x: number,

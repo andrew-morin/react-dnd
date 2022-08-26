@@ -63,6 +63,8 @@ export class TouchBackendImpl implements Backend {
 	private dragOverTargetIds: string[] | undefined
 	private draggedSourceNode: HTMLElement | undefined
 	private draggedSourceNodeRemovalObserver: MutationObserver | undefined
+	private lastMoveEvent: TouchEvent | MouseEvent | undefined
+	private shouldRequestMoveFrame: boolean
 
 	// Patch for iOS 13, discussion over #1585
 	private lastTargetTouchFallback: Touch | undefined
@@ -83,6 +85,7 @@ export class TouchBackendImpl implements Backend {
 		this.listenerTypes = []
 		this._mouseClientOffset = {}
 		this._isScrolling = false
+		this.shouldRequestMoveFrame = true
 
 		if (this.options.enableMouseEvents) {
 			this.listenerTypes.push(ListenerType.mouse)
@@ -135,7 +138,6 @@ export class TouchBackendImpl implements Backend {
 			true,
 		)
 		this.addEventListener(root, 'move', this.handleTopMove as any)
-		this.addEventListener(root, 'move', this.handleTopMoveCapture, true)
 		this.addEventListener(
 			root,
 			'end',
@@ -177,7 +179,6 @@ export class TouchBackendImpl implements Backend {
 			true,
 		)
 		this.removeEventListener(root, 'start', this.handleTopMoveStart as any)
-		this.removeEventListener(root, 'move', this.handleTopMoveCapture, true)
 		this.removeEventListener(root, 'move', this.handleTopMove as any)
 		this.removeEventListener(
 			root,
@@ -273,58 +274,11 @@ export class TouchBackendImpl implements Backend {
 				/* noop */
 			}
 		}
-
-		const handleMove = (e: MouseEvent | TouchEvent) => {
-			if (!this.document || !root || !this.monitor.isDragging()) {
-				return
-			}
-
-			let coords
-
-			/**
-			 * Grab the coordinates for the current mouse/touch position
-			 */
-			switch (e.type) {
-				case eventNames.mouse.move:
-					coords = {
-						x: (e as MouseEvent).clientX,
-						y: (e as MouseEvent).clientY,
-					}
-					break
-
-				case eventNames.touch.move:
-					coords = {
-						x: (e as TouchEvent).touches[0].clientX,
-						y: (e as TouchEvent).touches[0].clientY,
-					}
-					break
-			}
-
-			/**
-			 * Use the coordinates to grab the element the drag ended on.
-			 * If the element is the same as the target node (or any of it's children) then we have hit a drop target and can handle the move.
-			 */
-			const droppedOn =
-				coords != null
-					? this.document.elementFromPoint(coords.x, coords.y)
-					: undefined
-			const childMatch = droppedOn && node.contains(droppedOn)
-
-			if (droppedOn === node || childMatch) {
-				return this.handleMove(e, targetId)
-			}
-		}
-
-		/**
-		 * Attaching the event listener to the body so that touchmove will work while dragging over multiple target elements.
-		 */
-		this.addEventListener(this.document.body, 'move', handleMove as any)
 		this.targetNodes.set(targetId, node)
 
 		return (): void => {
 			if (this.document) {
 				this.targetNodes.delete(targetId)
-				this.removeEventListener(this.document.body, 'move', handleMove as any)
 			}
 		}
 	}
@@ -394,19 +348,6 @@ export class TouchBackendImpl implements Backend {
 		this.waitingForDelay = true
 	}
 
-	public handleTopMoveCapture = (): void => {
-		this.dragOverTargetIds = []
-	}
-
-	public handleMove = (
-		_evt: MouseEvent | TouchEvent,
-		targetId: string,
-	): void => {
-		if (this.dragOverTargetIds) {
-			this.dragOverTargetIds.unshift(targetId)
-		}
-	}
-
 	public handleTopMove = (e: TouchEvent | MouseEvent): void => {
 		if (this.timeout) {
 			clearTimeout(this.timeout)
@@ -414,8 +355,7 @@ export class TouchBackendImpl implements Backend {
 		if (!this.document || this.waitingForDelay) {
 			return
 		}
-		const { moveStartSourceIds, dragOverTargetIds } = this
-		const enableHoverOutsideTarget = this.options.enableHoverOutsideTarget
+		const { moveStartSourceIds } = this
 
 		const clientOffset = getEventClientOffset(e, this.lastTargetTouchFallback)
 
@@ -473,10 +413,51 @@ export class TouchBackendImpl implements Backend {
 
 		if (e.cancelable) e.preventDefault()
 
-		// Get the node elements of the hovered DropTargets
-		const dragOverTargetNodes: HTMLElement[] = (dragOverTargetIds || [])
-			.map((key) => this.targetNodes.get(key))
-			.filter((e) => !!e) as HTMLElement[]
+		this.lastMoveEvent = e
+
+		if (this.shouldRequestMoveFrame) {
+			this.shouldRequestMoveFrame = false
+			requestAnimationFrame(this.handleTopMoveStream)
+		}
+	}
+
+	public handleTopMoveStream = (): void => {
+		this.shouldRequestMoveFrame = true
+
+		if (!this.document || !this.monitor.isDragging() || !this.lastMoveEvent) {
+			return
+		}
+
+		const clientOffset = getEventClientOffset(this.lastMoveEvent)
+
+		if (!clientOffset) {
+			return
+		}
+
+		// If we have a drag blocking element, ignore it when finding the target element
+		const dragBlocker =
+			this.options.mouseBlockDivId &&
+			document.getElementById(this.options.mouseBlockDivId)
+		if (dragBlocker) {
+			dragBlocker.style.setProperty('pointer-events', 'none')
+		}
+
+		const targetElement = document.elementFromPoint(
+			clientOffset.x,
+			clientOffset.y,
+		)
+
+		if (dragBlocker) {
+			dragBlocker.style.setProperty('pointer-events', 'auto')
+		}
+
+		const targetNodes = this.targetNodes
+		const dragOverTargetNodes: HTMLElement[] = []
+		targetNodes.forEach(function (node) {
+			if (targetElement === node || node?.contains(targetElement)) {
+				dragOverTargetNodes.push(node)
+			}
+		})
 
 		// Get the a ordered list of nodes that are touched by
 		const elementsAtPoint = this.options.getDropTargetElementsAtPoint
@@ -514,8 +495,12 @@ export class TouchBackendImpl implements Backend {
 			.filter((node) => !!node)
 			.filter((id, index, ids) => ids.indexOf(id) === index) as string[]
 
+		const enableHoverOutsideTarget = this.options.enableHoverOutsideTarget
 		// Invoke hover for drop targets when source node is still over and pointer is outside
 		if (enableHoverOutsideTarget) {
+			const sourceNode = this.sourceNodes.get(
+				this.monitor.getSourceId() as string,
+			)
 			for (const targetId in this.targetNodes) {
 				const targetNode = this.targetNodes.get(targetId)
 				if (
