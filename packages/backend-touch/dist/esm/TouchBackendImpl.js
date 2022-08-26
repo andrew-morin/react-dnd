@@ -68,6 +68,10 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
 
     _defineProperty(this, "draggedSourceNodeRemovalObserver", void 0);
 
+    _defineProperty(this, "lastMoveEvent", void 0);
+
+    _defineProperty(this, "shouldRequestMoveFrame", void 0);
+
     _defineProperty(this, "lastTargetTouchFallback", void 0);
 
     _defineProperty(this, "getSourceClientOffset", function (sourceId) {
@@ -124,16 +128,6 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
       _this.waitingForDelay = true;
     });
 
-    _defineProperty(this, "handleTopMoveCapture", function () {
-      _this.dragOverTargetIds = [];
-    });
-
-    _defineProperty(this, "handleMove", function (_evt, targetId) {
-      if (_this.dragOverTargetIds) {
-        _this.dragOverTargetIds.unshift(targetId);
-      }
-    });
-
     _defineProperty(this, "handleTopMove", function (e) {
       if (_this.timeout) {
         clearTimeout(_this.timeout);
@@ -143,9 +137,7 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
         return;
       }
 
-      var moveStartSourceIds = _this.moveStartSourceIds,
-          dragOverTargetIds = _this.dragOverTargetIds;
-      var enableHoverOutsideTarget = _this.options.enableHoverOutsideTarget;
+      var moveStartSourceIds = _this.moveStartSourceIds;
       var clientOffset = getEventClientOffset(e, _this.lastTargetTouchFallback);
 
       if (!clientOffset) {
@@ -180,12 +172,47 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
 
       _this.actions.publishDragSource();
 
-      if (e.cancelable) e.preventDefault(); // Get the node elements of the hovered DropTargets
+      if (e.cancelable) e.preventDefault();
+      _this.lastMoveEvent = e;
 
-      var dragOverTargetNodes = (dragOverTargetIds || []).map(function (key) {
-        return _this.targetNodes.get(key);
-      }).filter(function (e) {
-        return !!e;
+      if (_this.shouldRequestMoveFrame) {
+        _this.shouldRequestMoveFrame = false;
+        requestAnimationFrame(_this.handleTopMoveStream);
+      }
+    });
+
+    _defineProperty(this, "handleTopMoveStream", function () {
+      _this.shouldRequestMoveFrame = true;
+
+      if (!_this.document || !_this.monitor.isDragging() || !_this.lastMoveEvent) {
+        return;
+      }
+
+      var clientOffset = getEventClientOffset(_this.lastMoveEvent);
+
+      if (!clientOffset) {
+        return;
+      } // If we have a drag blocking element, ignore it when finding the target element
+
+
+      var dragBlocker = _this.options.mouseBlockDivId && document.getElementById(_this.options.mouseBlockDivId);
+
+      if (dragBlocker) {
+        dragBlocker.style.setProperty('pointer-events', 'none');
+      }
+
+      var targetElement = document.elementFromPoint(clientOffset.x, clientOffset.y);
+
+      if (dragBlocker) {
+        dragBlocker.style.setProperty('pointer-events', 'auto');
+      }
+
+      var targetNodes = _this.targetNodes;
+      var dragOverTargetNodes = [];
+      targetNodes.forEach(function (node) {
+        if (targetElement === node || node !== null && node !== void 0 && node.contains(targetElement)) {
+          dragOverTargetNodes.push(node);
+        }
       }); // Get the a ordered list of nodes that are touched by
 
       var elementsAtPoint = _this.options.getDropTargetElementsAtPoint ? _this.options.getDropTargetElementsAtPoint(clientOffset.x, clientOffset.y, dragOverTargetNodes) : _this.document.elementsFromPoint(clientOffset.x, clientOffset.y); // Extend list with parents that are not receiving elementsFromPoint events (size 0 elements and svg groups)
@@ -221,9 +248,12 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
         return !!node;
       }).filter(function (id, index, ids) {
         return ids.indexOf(id) === index;
-      }); // Invoke hover for drop targets when source node is still over and pointer is outside
+      });
+      var enableHoverOutsideTarget = _this.options.enableHoverOutsideTarget; // Invoke hover for drop targets when source node is still over and pointer is outside
 
       if (enableHoverOutsideTarget) {
+        var sourceNode = _this.sourceNodes.get(_this.monitor.getSourceId());
+
         for (var targetId in _this.targetNodes) {
           var targetNode = _this.targetNodes.get(targetId);
 
@@ -303,6 +333,7 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
     this.listenerTypes = [];
     this._mouseClientOffset = {};
     this._isScrolling = false;
+    this.shouldRequestMoveFrame = true;
 
     if (this.options.enableMouseEvents) {
       this.listenerTypes.push(ListenerType.mouse);
@@ -354,7 +385,6 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
       this.addEventListener(root, 'start', this.getTopMoveStartHandler());
       this.addEventListener(root, 'start', this.handleTopMoveStartCapture, true);
       this.addEventListener(root, 'move', this.handleTopMove);
-      this.addEventListener(root, 'move', this.handleTopMoveCapture, true);
       this.addEventListener(root, 'end', this.handleTopMoveEndCapture, true);
 
       if (this.options.enableMouseEvents && !this.options.ignoreContextMenu) {
@@ -378,7 +408,6 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
       this._mouseClientOffset = {};
       this.removeEventListener(root, 'start', this.handleTopMoveStartCapture, true);
       this.removeEventListener(root, 'start', this.handleTopMoveStart);
-      this.removeEventListener(root, 'move', this.handleTopMoveCapture, true);
       this.removeEventListener(root, 'move', this.handleTopMove);
       this.removeEventListener(root, 'end', this.handleTopMoveEndCapture, true);
 
@@ -462,56 +491,10 @@ export var TouchBackendImpl = /*#__PURE__*/function () {
         };
       }
 
-      var handleMove = function handleMove(e) {
-        if (!_this4.document || !root || !_this4.monitor.isDragging()) {
-          return;
-        }
-
-        var coords;
-        /**
-         * Grab the coordinates for the current mouse/touch position
-         */
-
-        switch (e.type) {
-          case eventNames.mouse.move:
-            coords = {
-              x: e.clientX,
-              y: e.clientY
-            };
-            break;
-
-          case eventNames.touch.move:
-            coords = {
-              x: e.touches[0].clientX,
-              y: e.touches[0].clientY
-            };
-            break;
-        }
-        /**
-         * Use the coordinates to grab the element the drag ended on.
-         * If the element is the same as the target node (or any of it's children) then we have hit a drop target and can handle the move.
-         */
-
-
-        var droppedOn = coords != null ? _this4.document.elementFromPoint(coords.x, coords.y) : undefined;
-        var childMatch = droppedOn && node.contains(droppedOn);
-
-        if (droppedOn === node || childMatch) {
-          return _this4.handleMove(e, targetId);
-        }
-      };
-      /**
-       * Attaching the event listener to the body so that touchmove will work while dragging over multiple target elements.
-       */
-
-
-      this.addEventListener(this.document.body, 'move', handleMove);
       this.targetNodes.set(targetId, node);
       return function () {
         if (_this4.document) {
           _this4.targetNodes.delete(targetId);
-
-          _this4.removeEventListener(_this4.document.body, 'move', handleMove);
         }
       };
     }
