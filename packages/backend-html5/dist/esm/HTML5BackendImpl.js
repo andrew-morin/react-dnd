@@ -339,6 +339,7 @@ export var HTML5BackendImpl = /*#__PURE__*/function () {
 
     _defineProperty(this, "handleTopDropCapture", function (e) {
       _this.dropTargetIds = [];
+      e.preventDefault();
 
       if (_this.isDraggingNativeItem()) {
         var _this$currentNativeSo;
