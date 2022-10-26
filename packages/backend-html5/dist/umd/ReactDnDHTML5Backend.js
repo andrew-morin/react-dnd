@@ -876,6 +876,7 @@
 
       _defineProperty(this, "handleTopDropCapture", function (e) {
         _this.dropTargetIds = [];
+        e.preventDefault();
 
         if (_this.isDraggingNativeItem()) {
           var _this$currentNativeSo;
